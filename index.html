@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>BigTalk Voice Chat</title>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    :root {
+      --bg: #fdfbf7;
+      --text: #111;
+      --talk-btn: #d7263d;
+      --end-btn: #2d2d2d;
+    }
+    
+    * {
+      box-sizing: border-box;
+    }
+    
+    body {
+      margin: 0;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      text-align: center;
+    }
+
+    #status {
+      font-size: 1.75rem;
+      margin: 0 20px 40px;
+      line-height: 1.3;
+      min-height: 4.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #room {
+      font-size: 1.5rem;
+      padding: 15px;
+      margin-bottom: 40px;
+      width: 80%;
+      max-width: 300px;
+      text-align: center;
+      border: 3px solid #ccc;
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    #room:focus {
+      outline: 4px solid var(--talk-btn);
+      border-color: var(--talk-btn);
+    }
+
+    button {
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      border: none;
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: white;
+      cursor: pointer;
+      transition: transform 0.1s ease;
+      touch-action: manipulation;
+    }
+
+    button:active {
+      transform: scale(0.95);
+    }
+    
+    button:focus-visible {
+      outline: 6px solid #111;
+      outline-offset: 4px;
+    }
+
+    #talkBtn {
+      background-color: var(--talk-btn);
+      box-shadow: 0 10px 20px rgba(215, 38, 61, 0.4);
+    }
+
+    #endBtn {
+      background-color: var(--end-btn);
+      box-shadow: 0 10px 20px rgba(45, 45, 45, 0.4);
+      display: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      button {
+        transition: none;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="status">Press the red button to talk</div>
+  
+  <input type="number" id="room" placeholder="Room code (optional)" inputmode="numeric">
+  
+  <button id="talkBtn">TALK</button>
+  <button id="endBtn">END</button>
+
+  <script>
+    const roomInput = document.getElementById('room');
+    const talkBtn = document.getElementById('talkBtn');
+    const endBtn = document.getElementById('endBtn');
+    const statusEl = document.getElementById('status');
+    
+    let localStream = null;
+    let peer = null;
+    let call = null;
+    let isHost = false;
+    let wakeLock = null;
+    let audioEl = new Audio();
+    audioEl.autoplay = true;
+
+    const config = {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+      ]
+    };
+
+    function getRoomCode() {
+      const code = roomInput.value.trim();
+      return code ? code : "main";
+    }
+
+    function getHostId() {
+      return `bigtalk-${getRoomCode()}-host`;
+    }
+
+    function updateStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {
+        console.error("Wake Lock error:", err);
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock !== null) {
+        wakeLock.release().then(() => { wakeLock = null; });
+      }
+    }
+
+    talkBtn.addEventListener('click', async () => {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        requestWakeLock();
+      } catch (err) {
+        updateStatus("Please allow the microphone, then press TALK again");
+        return;
+      }
+      
+      talkBtn.style.display = 'none';
+      roomInput.style.display = 'none';
+      endBtn.style.display = 'block';
+      updateStatus("Connecting...");
+      
+      initializePeerAsHost();
+    });
+
+    endBtn.addEventListener('click', () => {
+      endCall();
+    });
+
+    function initializePeerAsHost() {
+      if (peer) peer.destroy();
+      const hostId = getHostId();
+      peer = new Peer(hostId, { config });
+      
+      peer.on('open', (id) => {
+        isHost = true;
+        updateStatus("Waiting for someone…");
+      });
+      
+      peer.on('call', (incomingCall) => {
+        if (call) return; // Ignore if already in a call
+        call = incomingCall;
+        call.answer(localStream);
+        setupCallEvents();
+      });
+      
+      peer.on('error', (err) => {
+        if (err.type === 'unavailable-id') {
+          // Host already exists! We are the caller.
+          initializePeerAsCaller();
+        } else {
+          console.error("Peer error:", err);
+          updateStatus("Connection error. Retrying...");
+          setTimeout(resetConnection, 3000);
+        }
+      });
+      
+      peer.on('disconnected', () => {
+        if (!peer.destroyed) peer.reconnect();
+      });
+    }
+
+    function initializePeerAsCaller() {
+      if (peer) peer.destroy();
+      
+      peer = new Peer({ config });
+      
+      peer.on('open', (id) => {
+        isHost = false;
+        updateStatus("Calling…");
+        const hostId = getHostId();
+        call = peer.call(hostId, localStream);
+        setupCallEvents();
+      });
+      
+      peer.on('error', (err) => {
+        console.error("Caller peer error:", err);
+        updateStatus("Connection error. Retrying...");
+        setTimeout(resetConnection, 3000);
+      });
+      
+      peer.on('disconnected', () => {
+        if (!peer.destroyed) peer.reconnect();
+      });
+    }
+
+    function setupCallEvents() {
+      call.on('stream', (remoteStream) => {
+        audioEl.srcObject = remoteStream;
+        updateStatus("Connected. You can talk now");
+      });
+      
+      call.on('close', handleCallClosed);
+      
+      call.on('error', (err) => {
+        console.error("Call error", err);
+        handleCallClosed();
+      });
+    }
+
+    function handleCallClosed() {
+      if (!call) return;
+      call = null;
+      if (!isHost) {
+        updateStatus("The other person left. Waiting for someone…");
+        // Become the host now that the other person left
+        setTimeout(() => {
+          if (endBtn.style.display !== 'none') {
+            initializePeerAsHost();
+          }
+        }, 1000);
+      } else {
+        updateStatus("The other person left. Waiting for someone…");
+      }
+    }
+
+    // Monitor call connection state continuously
+    setInterval(() => {
+      if (call && call.peerConnection) {
+        const state = call.peerConnection.iceConnectionState;
+        if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+          handleCallClosed();
+        }
+      }
+    }, 2000);
+
+    function resetConnection() {
+      if (endBtn.style.display === 'none') return; // User already ended call
+      initializePeerAsHost();
+    }
+
+    function endCall() {
+      if (call) {
+        call.close();
+        call = null;
+      }
+      if (peer) {
+        peer.destroy();
+        peer = null;
+      }
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+      }
+      releaseWakeLock();
+      
+      talkBtn.style.display = 'block';
+      roomInput.style.display = 'block';
+      endBtn.style.display = 'none';
+      updateStatus("Press the red button to talk");
+    }
+  </script>
+</body>
+</html>
