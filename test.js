@@ -1,5 +1,4 @@
 const WebSocket = require('ws');
-const http = require('http');
 
 const PORT = 8080;
 const URL = `ws://localhost:${PORT}`;
@@ -27,90 +26,74 @@ function waitForMessage(ws, expectedType) {
 }
 
 async function runTests() {
-  console.log("Starting Server Tests...\n");
+  console.log("Starting Mesh Server Tests...\n");
 
-  // a) A+B connect
-  console.log("Test A: A+B connect");
+  // a) A connects
+  console.log("Test A: A connects");
   const wsA = await connectClient();
+  wsA.send(JSON.stringify({ type: 'join', room: 'mesh-room' }));
+  const msgA = await waitForMessage(wsA, 'room-joined');
+  console.log(`-> Passed: A joined room. (Peers: ${msgA.peers.length})`);
+
+  // b) B connects
+  console.log("\nTest B: B connects");
   const wsB = await connectClient();
+  wsB.send(JSON.stringify({ type: 'join', room: 'mesh-room' }));
   
-  wsA.send(JSON.stringify({ type: 'join', room: 'test-room' }));
-  wsB.send(JSON.stringify({ type: 'join', room: 'test-room' }));
-  
-  const [msgA, msgB] = await Promise.all([
-    waitForMessage(wsA, 'peer-joined'),
-    waitForMessage(wsB, 'wait-for-offer')
+  const [msgBJoined, msgAPeerJoined] = await Promise.all([
+    waitForMessage(wsB, 'room-joined'),
+    waitForMessage(wsA, 'peer-joined')
   ]);
-  console.log("-> Passed: A got 'peer-joined', B got 'wait-for-offer'.");
+  console.log(`-> Passed: B got room-joined (Peers: ${msgBJoined.peers.length}). A got peer-joined.`);
 
-  // e) two different room codes never hear each other
-  console.log("\nTest E: Two different rooms isolated");
-  const wsD = await connectClient();
-  wsD.send(JSON.stringify({ type: 'join', room: 'other-room' }));
-  wsA.send(JSON.stringify({ type: 'signal', data: { test: 'hello' } }));
-  
-  // wait a bit to ensure D doesn't receive it, but B does
-  let dGotMsg = false;
-  wsD.on('message', () => { dGotMsg = true; });
-  
-  const msgFromA = await waitForMessage(wsB, 'signal');
-  if (msgFromA.data.test === 'hello' && !dGotMsg) {
-    console.log("-> Passed: Signals relayed only within room.");
-  } else {
-    console.error("-> Failed: Signal leaking or missing.");
-  }
-  
-  // c) B leaves and a new C joins A's room
-  console.log("\nTest C: B leaves, C joins");
-  wsB.send(JSON.stringify({ type: 'leave' }));
-  await waitForMessage(wsA, 'peer-left');
-  
+  // c) 3 more clients connect (total 5)
+  console.log("\nTest C: 3 more clients (total 5)");
   const wsC = await connectClient();
-  wsC.send(JSON.stringify({ type: 'join', room: 'test-room' }));
-  await Promise.all([
-    waitForMessage(wsA, 'peer-joined'),
-    waitForMessage(wsC, 'wait-for-offer')
-  ]);
-  console.log("-> Passed: B left cleanly, C joined and triggered handshakes.");
-
-  // d) A third client gets "full"
-  console.log("\nTest D: Room full");
-  const wsThird = await connectClient();
-  wsThird.send(JSON.stringify({ type: 'join', room: 'test-room' }));
-  const fullMsg = await waitForMessage(wsThird, 'full');
-  console.log("-> Passed: Third client got 'full'.");
-
-  // b) A presses END (sends leave), then A presses TALK again and reconnects to C with no stale state
-  console.log("\nTest B: A reconnects with no stale state");
-  wsA.send(JSON.stringify({ type: 'leave' }));
-  await waitForMessage(wsC, 'peer-left');
+  wsC.send(JSON.stringify({ type: 'join', room: 'mesh-room' }));
+  await waitForMessage(wsC, 'room-joined');
   
-  wsA.send(JSON.stringify({ type: 'join', room: 'test-room' }));
-  await Promise.all([
-    waitForMessage(wsC, 'peer-joined'), // C was in the room first this time
-    waitForMessage(wsA, 'wait-for-offer')
-  ]);
-  console.log("-> Passed: A reconnected cleanly, C creates offer.");
+  const wsD = await connectClient();
+  wsD.send(JSON.stringify({ type: 'join', room: 'mesh-room' }));
+  await waitForMessage(wsD, 'room-joined');
 
-  // f) Default no-code flow
-  console.log("\nTest F: Random private room for empty input");
   const wsE = await connectClient();
-  wsE.send(JSON.stringify({ type: 'join', room: '' })); // empty string
-  // It shouldn't join test-room or main. It's in a random room alone.
+  wsE.send(JSON.stringify({ type: 'join', room: 'mesh-room' }));
+  await waitForMessage(wsE, 'room-joined');
+  console.log("-> Passed: 5 clients in room.");
+
+  // d) 6th client rejected (Max 5)
+  console.log("\nTest D: 6th client rejected");
   const wsF = await connectClient();
-  wsF.send(JSON.stringify({ type: 'join', room: '' })); 
-  // Should also be in its own random room. Neither gets peer-joined!
-  let gotJoined = false;
-  wsF.on('message', () => { gotJoined = true; });
-  await new Promise(r => setTimeout(r, 500));
-  if (!gotJoined) {
-    console.log("-> Passed: Empty rooms generate isolated unique random rooms.");
+  wsF.send(JSON.stringify({ type: 'join', room: 'mesh-room' }));
+  const msgFull = await waitForMessage(wsF, 'full');
+  console.log("-> Passed: 6th client got 'full'.");
+
+  // e) Target-based signaling works
+  console.log("\nTest E: Target-based signaling");
+  wsA.send(JSON.stringify({ type: 'signal', targetId: msgBJoined.yourId, data: { test: 'hello' } }));
+  
+  let cGotSignal = false;
+  wsC.on('message', (data) => { if(JSON.parse(data).type === 'signal') cGotSignal = true; });
+
+  const signalAtB = await waitForMessage(wsB, 'signal');
+  if (signalAtB.data.test === 'hello' && !cGotSignal) {
+    console.log("-> Passed: Signal routed specifically to B, ignored by C.");
   } else {
-    console.error("-> Failed: Empty rooms merged into same room.");
+    console.error("-> Failed: Signal leaked or not delivered.");
+  }
+
+  // f) Disconnect triggers peer-left
+  console.log("\nTest F: Disconnect triggers peer-left");
+  wsB.send(JSON.stringify({ type: 'leave' }));
+  const leftMsg = await waitForMessage(wsA, 'peer-left');
+  if (leftMsg.peerId === msgBJoined.yourId) {
+    console.log("-> Passed: A notified that B left.");
+  } else {
+    console.error("-> Failed: Peer-left ID mismatch.");
   }
 
   // Cleanup
-  wsA.close(); wsC.close(); wsD.close(); wsE.close(); wsF.close(); wsThird.close();
+  wsA.close(); wsC.close(); wsD.close(); wsE.close(); wsF.close();
   console.log("\nAll tests completed successfully.");
   process.exit(0);
 }

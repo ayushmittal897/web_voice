@@ -14,6 +14,8 @@
       --light-gray: #e0e0e0;
       --mic-on: #28a745;
       --mic-off: #6c757d;
+      --error-bg: #ffebee;
+      --error-text: #b71c1c;
     }
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -39,15 +41,39 @@
     }
     .screen.active { display: flex; }
     h1 { font-size: 2rem; margin-bottom: 10px; }
-    p.status {
-      font-size: 1.5rem;
-      line-height: 1.4;
-      min-height: 4.5rem;
-      margin-bottom: 30px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    
+    .status-container {
+      margin-bottom: 20px;
+      width: 100%;
     }
+    p.status {
+      font-size: 1.3rem;
+      line-height: 1.4;
+      font-weight: bold;
+      margin: 0 0 10px 0;
+    }
+    .error-box {
+      background-color: var(--error-bg);
+      color: var(--error-text);
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 1rem;
+      margin-bottom: 20px;
+      display: none;
+      word-wrap: break-word;
+    }
+    .active-room-display {
+      font-size: 1.4rem;
+      font-weight: bold;
+      color: var(--primary);
+      margin-bottom: 20px;
+      display: none;
+      background: #fff;
+      border: 2px dashed var(--primary);
+      padding: 10px 20px;
+      border-radius: 12px;
+    }
+    
     input[type="text"] {
       font-size: 2rem;
       padding: 15px;
@@ -60,6 +86,7 @@
       background: #fff;
     }
     input[type="text"]:focus { outline: none; border-color: var(--primary); }
+    
     .big-btn {
       width: 220px;
       height: 220px;
@@ -106,8 +133,9 @@
       background: none; border: none; color: var(--primary); font-size: 1.2rem;
       text-decoration: underline; cursor: pointer; padding: 10px; margin-left: 10px;
     }
-    .controls-wrapper { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+    .controls-wrapper { display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%; }
     .version { font-size: 0.8rem; color: #aaa; position: absolute; bottom: 10px; }
+    #audioContainer { display: none; }
     @media (prefers-reduced-motion: reduce) { .big-btn { transition: none; } }
   </style>
 </head>
@@ -115,31 +143,40 @@
 
   <div id="screenSetup" class="screen">
     <h1>BigTalk Setup</h1>
-    <p class="status">Enter your family room code</p>
-    <input type="text" id="roomInput" placeholder="Leave empty for random room">
+    <div class="status-container">
+      <p class="status">Enter your family room code</p>
+      <div id="setupError" class="error-box"></div>
+    </div>
+    <input type="text" id="roomInput" placeholder="Leave empty for random">
     <button id="saveBtn" class="btn-save">SAVE & CONTINUE</button>
   </div>
 
   <div id="screenMain" class="screen">
-    <p id="mainStatus" class="status">Getting ready...</p>
+    <div class="status-container">
+      <div id="activeRoomDisplay" class="active-room-display">ROOM: <span id="activeRoomCode">...</span></div>
+      <p id="mainStatus" class="status">Getting ready...</p>
+      <div id="mainError" class="error-box"></div>
+    </div>
+    
     <div id="idleControls" class="controls-wrapper">
       <button id="talkBtn" class="big-btn btn-talk" disabled>TALK</button>
       <div class="room-info">
-        Room: <strong id="displayRoom">...</strong> 
+        Saved Room: <strong id="displayRoom">...</strong> 
         <button id="changeRoomBtn">Change</button>
       </div>
     </div>
+    
     <div id="callControls" class="controls-wrapper" style="display: none;">
       <button id="endBtn" class="big-btn btn-end">END</button>
       <button id="micBtn" class="big-btn btn-mic">MIC IS ON</button>
     </div>
   </div>
 
-  <div class="version" id="versionText">v2.0.0 | Disconnected</div>
+  <div class="version" id="versionText">v3.0 (Max 5 Users) | Disconnected</div>
+  <div id="audioContainer"></div>
 
   <script>
     // Configuration
-    // Set to the deployed Render URL
     const RENDER_DOMAIN = "web-voice-9s2g.onrender.com";
     const IS_LOCAL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     
@@ -151,29 +188,34 @@
     const screenMain = document.getElementById('screenMain');
     const roomInput = document.getElementById('roomInput');
     const saveBtn = document.getElementById('saveBtn');
+    
     const mainStatus = document.getElementById('mainStatus');
+    const mainError = document.getElementById('mainError');
+    const setupError = document.getElementById('setupError');
+    const activeRoomDisplay = document.getElementById('activeRoomDisplay');
+    const activeRoomCode = document.getElementById('activeRoomCode');
+    
     const displayRoom = document.getElementById('displayRoom');
     const changeRoomBtn = document.getElementById('changeRoomBtn');
+    
     const idleControls = document.getElementById('idleControls');
     const callControls = document.getElementById('callControls');
     const talkBtn = document.getElementById('talkBtn');
     const endBtn = document.getElementById('endBtn');
     const micBtn = document.getElementById('micBtn');
     const versionText = document.getElementById('versionText');
+    const audioContainer = document.getElementById('audioContainer');
 
     // State
     let roomCode = localStorage.getItem('bigtalk_room') || '';
     let localStream = null;
     let ws = null;
-    let pc = null;
     let isServerReady = false;
     let isMuted = false;
     let wakeLock = null;
-    let connectionTimeoutId = null;
-    let iceCandidateQueue = [];
-    let isRemoteDescriptionSet = false;
-    let audioEl = new Audio();
-    audioEl.autoplay = true;
+    
+    // peers Map: peerId -> { pc, audioEl, isRemoteDescriptionSet, iceCandidateQueue }
+    let peers = new Map();
 
     const iceConfig = {
       iceServers: [
@@ -196,6 +238,7 @@
     function showScreen(screen) {
       screenSetup.classList.remove('active');
       screenMain.classList.remove('active');
+      hideError();
       if (screen === 'setup') {
         screenSetup.classList.add('active');
         roomInput.value = roomCode;
@@ -212,11 +255,28 @@
     function setStatus(text) {
       mainStatus.textContent = text;
     }
+    
+    function showError(errText) {
+      mainError.textContent = "Error Details: " + errText;
+      mainError.style.display = 'block';
+    }
+    
+    function hideError() {
+      mainError.style.display = 'none';
+      setupError.style.display = 'none';
+      mainError.textContent = '';
+      setupError.textContent = '';
+    }
 
-    function updateDebugInfo(stateText) {
-      const pcState = pc ? pc.iceConnectionState : 'no-pc';
+    function updateDebugInfo() {
       const wsState = ws ? (ws.readyState === 1 ? 'ws-open' : 'ws-closed') : 'no-ws';
-      versionText.textContent = `v2.0.0 | ${stateText || ''} | ${wsState} | ${pcState}`;
+      versionText.textContent = `v3.0 (Max 5 Users) | Peers: ${peers.size} | ${wsState}`;
+      
+      if (peers.size > 0) {
+        setStatus(`Connected to ${peers.size} person(s). You can talk now.`);
+      } else if (callControls.style.display !== 'none') {
+        setStatus("Waiting for someone to join...");
+      }
     }
 
     // Server Wakeup
@@ -224,11 +284,13 @@
       if (isServerReady) return;
       const startTime = Date.now();
       talkBtn.disabled = true;
-      setStatus("Getting ready...");
+      setStatus("Getting ready (waking up server)...");
+      hideError();
       
       while (!isServerReady) {
         if (Date.now() - startTime > 60000) {
-          setStatus("Server took too long to wake up. Refresh the page.");
+          setStatus("Server took too long to wake up.");
+          showError("The server at " + RENDER_DOMAIN + " is not responding. Please check your internet or try again later.");
           return;
         }
         try {
@@ -237,7 +299,7 @@
             isServerReady = true;
             talkBtn.disabled = false;
             setStatus("Press TALK when you are ready.");
-            updateDebugInfo('Ready');
+            updateDebugInfo();
             break;
           }
         } catch(e) {}
@@ -268,11 +330,12 @@
 
     // START CALL
     talkBtn.addEventListener('click', async () => {
+      hideError();
       setStatus("Asking for microphone...");
       
       // Clean up any old state completely
       closeSocket();
-      closePeerConnectionOnly();
+      removeAllPeers();
       
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -284,7 +347,8 @@
           if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
         } catch(e) {}
       } catch (err) {
-        setStatus("Microphone permission denied.");
+        setStatus("Cannot make call.");
+        showError("Microphone permission was denied or no microphone found. You must allow microphone access in your browser settings to talk.");
         return;
       }
       
@@ -300,53 +364,54 @@
         ws.onclose = null;
         ws.close();
       }
-      setStatus(retryCount > 0 ? "Reconnecting..." : "Connecting to server...");
+      setStatus(retryCount > 0 ? "Reconnecting to server..." : "Connecting to server...");
       
       ws = new WebSocket(WS_URL);
       
       ws.onopen = () => {
-        updateDebugInfo('WS Connected');
+        hideError();
+        updateDebugInfo();
         ws.send(JSON.stringify({ type: 'join', room: roomCode }));
         setStatus("Waiting for someone to join...");
-        
-        // Timeout if not connected within 20s
-        clearTimeout(connectionTimeoutId);
-        connectionTimeoutId = setTimeout(() => {
-          if (pc && pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
-            setStatus("Could not connect. Press END and try again.");
-            endCall();
-          }
-        }, 20000);
       };
       
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         
         if (msg.type === 'full') {
-          setStatus("Room is full. Try another room.");
+          setStatus("Room is full (Max 5 people).");
+          showError("The room you tried to join already has the maximum of 5 people in it. Try a different room code.");
           endCall();
         }
-        else if (msg.type === 'wait-for-offer') {
-          // Other peer is creating the offer, we just wait.
-          setupPeerConnection();
+        else if (msg.type === 'room-joined') {
+          // We successfully joined.
+          activeRoomCode.textContent = msg.room;
+          activeRoomDisplay.style.display = 'block';
+          
+          // Connect to all existing peers in the room
+          msg.peers.forEach(peerId => {
+            if (peerId !== msg.yourId) {
+              createPeerConnection(peerId, true); // We are the initiator (create offer)
+            }
+          });
         }
         else if (msg.type === 'peer-joined') {
-          // We are first, so we create the offer.
-          createOffer();
+          // Someone new joined. They will send the offer, we just setup the PC and wait.
+          createPeerConnection(msg.peerId, false);
         }
         else if (msg.type === 'peer-left') {
-          closePeerConnectionOnly();
-          setStatus("The other person left. Waiting for someone to join...");
-          // Keep socket and mic active, ready for next join.
+          removePeer(msg.peerId);
         }
         else if (msg.type === 'signal') {
-          handleSignal(msg.data);
+          handleSignal(msg.senderId, msg.data);
         }
       };
       
       ws.onclose = () => {
-        updateDebugInfo('WS Dropped');
+        updateDebugInfo();
         if (callControls.style.display !== 'none') {
+          setStatus("Connection dropped. Reconnecting...");
+          showError("Lost connection to the signaling server. Trying to reconnect automatically...");
           const delay = Math.min(1000 * Math.pow(2, retryCount), 4000);
           setTimeout(() => connectSocket(retryCount + 1), delay);
         }
@@ -368,90 +433,125 @@
       }
     }
 
-    // WEBRTC LOGIC
-    function setupPeerConnection() {
-      closePeerConnectionOnly();
-      iceCandidateQueue = [];
-      isRemoteDescriptionSet = false;
+    // WEBRTC PEER LOGIC (Mesh Network)
+    function createPeerConnection(peerId, isInitiator) {
+      if (peers.has(peerId)) return; // Already exists
       
-      pc = new RTCPeerConnection(iceConfig);
+      const pc = new RTCPeerConnection(iceConfig);
       
+      const audioEl = new Audio();
+      audioEl.autoplay = true;
+      audioContainer.appendChild(audioEl);
+      
+      const peerState = {
+        pc: pc,
+        audioEl: audioEl,
+        isRemoteDescriptionSet: false,
+        iceCandidateQueue: []
+      };
+      peers.set(peerId, peerState);
+      
+      // Add local stream tracks
       localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
       
       pc.onicecandidate = (event) => {
         if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'signal', data: { candidate: event.candidate } }));
+          ws.send(JSON.stringify({ type: 'signal', targetId: peerId, data: { candidate: event.candidate } }));
         }
       };
       
       pc.ontrack = (event) => {
         audioEl.srcObject = event.streams[0];
-        setStatus("Connected. You can talk now.");
-        clearTimeout(connectionTimeoutId);
+        updateDebugInfo();
       };
       
       pc.oniceconnectionstatechange = () => {
-        updateDebugInfo();
         if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-           setStatus("Call disconnected. Waiting for someone to join...");
-           closePeerConnectionOnly();
+           console.log(`Connection to peer ${peerId} failed or disconnected.`);
+           showError(`Lost audio connection to one of the users. They may have disconnected abruptly.`);
+           removePeer(peerId);
         }
+        updateDebugInfo();
       };
-    }
 
-    function closePeerConnectionOnly() {
-      if (pc) {
-        pc.close();
-        pc = null;
+      if (isInitiator) {
+        makeOffer(peerId, pc);
       }
-      updateDebugInfo();
     }
 
-    async function createOffer() {
-      setupPeerConnection();
+    async function makeOffer(peerId, pc) {
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'signal', data: { sdp: pc.localDescription } }));
+          ws.send(JSON.stringify({ type: 'signal', targetId: peerId, data: { sdp: pc.localDescription } }));
         }
       } catch (e) {
-        console.error("Error creating offer", e);
+        showError(`Failed to create connection offer for a peer: ${e.message}`);
       }
     }
 
-    async function handleSignal(data) {
-      if (!pc) setupPeerConnection();
+    async function handleSignal(senderId, data) {
+      let peerState = peers.get(senderId);
       
+      if (!peerState) {
+        // Fallback: If we get a signal but don't have a PC, create one as non-initiator
+        createPeerConnection(senderId, false);
+        peerState = peers.get(senderId);
+      }
+      
+      const pc = peerState.pc;
+
       try {
         if (data.sdp) {
           await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-          isRemoteDescriptionSet = true;
+          peerState.isRemoteDescriptionSet = true;
           
           // Process queued ICE candidates
-          for (const cand of iceCandidateQueue) {
+          for (const cand of peerState.iceCandidateQueue) {
             await pc.addIceCandidate(cand);
           }
-          iceCandidateQueue = [];
+          peerState.iceCandidateQueue = [];
           
           if (data.sdp.type === 'offer') {
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'signal', data: { sdp: pc.localDescription } }));
+              ws.send(JSON.stringify({ type: 'signal', targetId: senderId, data: { sdp: pc.localDescription } }));
             }
           }
         } else if (data.candidate) {
           const candidate = new RTCIceCandidate(data.candidate);
-          if (isRemoteDescriptionSet) {
+          if (peerState.isRemoteDescriptionSet) {
             await pc.addIceCandidate(candidate);
           } else {
-            iceCandidateQueue.push(candidate);
+            peerState.iceCandidateQueue.push(candidate);
           }
         }
       } catch(e) {
-        console.error("Signal error", e);
+        showError(`Failed to process network signal from a peer: ${e.message}`);
       }
+    }
+
+    function removePeer(peerId) {
+      const peerState = peers.get(peerId);
+      if (peerState) {
+        peerState.pc.close();
+        if (peerState.audioEl && peerState.audioEl.parentNode) {
+          peerState.audioEl.parentNode.removeChild(peerState.audioEl);
+        }
+        peers.delete(peerId);
+      }
+      updateDebugInfo();
+    }
+
+    function removeAllPeers() {
+      for (const peerId of peers.keys()) {
+        removePeer(peerId);
+      }
+      peers.clear();
+      audioContainer.innerHTML = ''; // clear audio elements just in case
+      updateDebugInfo();
     }
 
     // END CALL
@@ -459,13 +559,15 @@
 
     function endCall() {
       closeSocket();
-      closePeerConnectionOnly();
+      removeAllPeers();
+      
+      activeRoomDisplay.style.display = 'none';
+      hideError();
       
       if (localStream) {
         localStream.getTracks().forEach(t => t.stop());
         localStream = null;
       }
-      clearTimeout(connectionTimeoutId);
       if (wakeLock) {
         wakeLock.release().catch(()=>{});
         wakeLock = null;
@@ -474,7 +576,7 @@
       idleControls.style.display = 'flex';
       callControls.style.display = 'none';
       setStatus(isServerReady ? "Press TALK when you are ready." : "Getting ready...");
-      updateDebugInfo('Idle');
+      updateDebugInfo();
     }
 
     init();
