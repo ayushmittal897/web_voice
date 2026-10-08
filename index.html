@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>BigTalk Voice Chat</title>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     :root {
       --bg: #fdfbf7;
@@ -29,9 +28,7 @@
       text-align: center;
       padding: env(safe-area-inset-top) 20px env(safe-area-inset-bottom);
     }
-    
     * { box-sizing: border-box; }
-
     .screen {
       display: none;
       flex-direction: column;
@@ -40,14 +37,8 @@
       width: 100%;
       max-width: 400px;
     }
-    .screen.active {
-      display: flex;
-    }
-
-    h1 {
-      font-size: 2rem;
-      margin-bottom: 10px;
-    }
+    .screen.active { display: flex; }
+    h1 { font-size: 2rem; margin-bottom: 10px; }
     p.status {
       font-size: 1.5rem;
       line-height: 1.4;
@@ -57,7 +48,6 @@
       align-items: center;
       justify-content: center;
     }
-    
     input[type="text"] {
       font-size: 2rem;
       padding: 15px;
@@ -69,11 +59,7 @@
       text-transform: uppercase;
       background: #fff;
     }
-    input[type="text"]:focus {
-      outline: none;
-      border-color: var(--primary);
-    }
-    
+    input[type="text"]:focus { outline: none; border-color: var(--primary); }
     .big-btn {
       width: 220px;
       height: 220px;
@@ -90,23 +76,10 @@
       justify-content: center;
       touch-action: manipulation;
     }
-    .big-btn:active {
-      transform: scale(0.95);
-    }
-    .big-btn:focus-visible {
-      outline: 6px solid #111;
-      outline-offset: 4px;
-    }
-
-    .btn-talk {
-      background-color: var(--primary);
-      box-shadow: 0 10px 20px rgba(215, 38, 61, 0.4);
-    }
-    .btn-end {
-      background-color: var(--dark);
-      box-shadow: 0 10px 20px rgba(45, 45, 45, 0.4);
-    }
-    
+    .big-btn:active { transform: scale(0.95); }
+    .big-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-talk { background-color: var(--primary); box-shadow: 0 10px 20px rgba(215, 38, 61, 0.4); }
+    .btn-end { background-color: var(--dark); box-shadow: 0 10px 20px rgba(45, 45, 45, 0.4); }
     .btn-mic {
       background-color: var(--mic-on);
       width: 140px;
@@ -115,10 +88,7 @@
       box-shadow: 0 5px 15px rgba(0,0,0,0.2);
       margin-top: 10px;
     }
-    .btn-mic.muted {
-      background-color: var(--mic-off);
-    }
-    
+    .btn-mic.muted { background-color: var(--mic-off); }
     .btn-save {
       width: 100%;
       padding: 20px;
@@ -130,77 +100,51 @@
       cursor: pointer;
       font-weight: bold;
     }
-    .btn-save:active {
-      background: var(--primary-active);
-    }
-    
-    .room-info {
-      font-size: 1.2rem;
-      margin-top: 40px;
-      color: #555;
-    }
+    .btn-save:active { background: var(--primary-active); }
+    .room-info { font-size: 1.2rem; margin-top: 40px; color: #555; }
     .room-info button {
-      background: none;
-      border: none;
-      color: var(--primary);
-      font-size: 1.2rem;
-      text-decoration: underline;
-      cursor: pointer;
-      padding: 10px;
-      margin-left: 10px;
+      background: none; border: none; color: var(--primary); font-size: 1.2rem;
+      text-decoration: underline; cursor: pointer; padding: 10px; margin-left: 10px;
     }
-    
-    .controls-wrapper {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 20px;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .big-btn { transition: none; }
-    }
+    .controls-wrapper { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+    .version { font-size: 0.8rem; color: #aaa; position: absolute; bottom: 10px; }
+    @media (prefers-reduced-motion: reduce) { .big-btn { transition: none; } }
   </style>
 </head>
 <body>
 
-  <!-- SETUP SCREEN -->
   <div id="screenSetup" class="screen">
     <h1>BigTalk Setup</h1>
     <p class="status">Enter your family room code</p>
-    <input type="text" id="roomInput" placeholder="e.g. 1234">
+    <input type="text" id="roomInput" placeholder="Leave empty for random room">
     <button id="saveBtn" class="btn-save">SAVE & CONTINUE</button>
   </div>
 
-  <!-- MAIN SCREEN -->
   <div id="screenMain" class="screen">
-    <p id="mainStatus" class="status">Press TALK when you are ready.</p>
-    
+    <p id="mainStatus" class="status">Getting ready...</p>
     <div id="idleControls" class="controls-wrapper">
-      <button id="talkBtn" class="big-btn btn-talk">TALK</button>
+      <button id="talkBtn" class="big-btn btn-talk" disabled>TALK</button>
       <div class="room-info">
         Room: <strong id="displayRoom">...</strong> 
         <button id="changeRoomBtn">Change</button>
       </div>
     </div>
-    
     <div id="callControls" class="controls-wrapper" style="display: none;">
       <button id="endBtn" class="big-btn btn-end">END</button>
       <button id="micBtn" class="big-btn btn-mic">MIC IS ON</button>
     </div>
   </div>
 
+  <div class="version" id="versionText">v2.0.0 | Disconnected</div>
+
   <script>
-    // State
-    let roomCode = localStorage.getItem('bigtalk_room') || '';
-    let currentHostSuffix = 0;
-    let localStream = null;
-    let peer = null;
-    let call = null;
-    let wakeLock = null;
-    let isMuted = false;
-    let audioEl = new Audio();
-    audioEl.autoplay = true;
+    // Configuration
+    // REPLACEME: Replace this URL with your actual Render URL when deployed
+    const RENDER_DOMAIN = "your-render-url.onrender.com";
+    const IS_LOCAL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    
+    const API_URL = IS_LOCAL ? 'http://localhost:8080' : `https://${RENDER_DOMAIN}`;
+    const WS_URL = IS_LOCAL ? 'ws://localhost:8080' : `wss://${RENDER_DOMAIN}`;
 
     // Elements
     const screenSetup = document.getElementById('screenSetup');
@@ -215,32 +159,49 @@
     const talkBtn = document.getElementById('talkBtn');
     const endBtn = document.getElementById('endBtn');
     const micBtn = document.getElementById('micBtn');
+    const versionText = document.getElementById('versionText');
 
-    // Config
-    const peerConfig = {
-      config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
-        ]
-      }
+    // State
+    let roomCode = localStorage.getItem('bigtalk_room') || '';
+    let localStream = null;
+    let ws = null;
+    let pc = null;
+    let isServerReady = false;
+    let isMuted = false;
+    let wakeLock = null;
+    let connectionTimeoutId = null;
+    let iceCandidateQueue = [];
+    let isRemoteDescriptionSet = false;
+    let audioEl = new Audio();
+    audioEl.autoplay = true;
+
+    const iceConfig = {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+        { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" }
+      ]
     };
 
-    // UI Navigation
+    // Initialization
+    function init() {
+      if (roomCode) {
+        showScreen('main');
+        checkServer();
+      } else {
+        showScreen('setup');
+      }
+    }
+
     function showScreen(screen) {
       screenSetup.classList.remove('active');
       screenMain.classList.remove('active');
-      
       if (screen === 'setup') {
         screenSetup.classList.add('active');
         roomInput.value = roomCode;
-        if(roomCode === '') roomInput.focus();
       } else {
         screenMain.classList.add('active');
-        displayRoom.textContent = roomCode;
-        resetUI();
+        displayRoom.textContent = roomCode || 'RANDOM';
       }
     }
 
@@ -248,32 +209,47 @@
       return code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     }
 
-    function getHostId() {
-      return `bigtalk-${sanitizeRoom(roomCode)}-host-${currentHostSuffix}`;
-    }
-
     function setStatus(text) {
       mainStatus.textContent = text;
     }
 
-    // Init
-    if (roomCode) {
-      showScreen('main');
-    } else {
-      showScreen('setup');
+    function updateDebugInfo(stateText) {
+      const pcState = pc ? pc.iceConnectionState : 'no-pc';
+      const wsState = ws ? (ws.readyState === 1 ? 'ws-open' : 'ws-closed') : 'no-ws';
+      versionText.textContent = `v2.0.0 | ${stateText || ''} | ${wsState} | ${pcState}`;
     }
 
-    // Setup events
-    saveBtn.addEventListener('click', () => {
-      const val = sanitizeRoom(roomInput.value);
-      if (val.length < 2) {
-        alert("Please enter a room code (at least 2 letters or numbers).");
-        return;
+    // Server Wakeup
+    async function checkServer() {
+      if (isServerReady) return;
+      const startTime = Date.now();
+      talkBtn.disabled = true;
+      setStatus("Getting ready...");
+      
+      while (!isServerReady) {
+        if (Date.now() - startTime > 60000) {
+          setStatus("Server took too long to wake up. Refresh the page.");
+          return;
+        }
+        try {
+          const res = await fetch(API_URL + '/health');
+          if (res.ok) {
+            isServerReady = true;
+            talkBtn.disabled = false;
+            setStatus("Press TALK when you are ready.");
+            updateDebugInfo('Ready');
+            break;
+          }
+        } catch(e) {}
+        await new Promise(r => setTimeout(r, 3000));
       }
-      roomCode = val;
+    }
+
+    saveBtn.addEventListener('click', () => {
+      roomCode = sanitizeRoom(roomInput.value);
       localStorage.setItem('bigtalk_room', roomCode);
-      currentHostSuffix = 0;
       showScreen('main');
+      checkServer();
     });
 
     changeRoomBtn.addEventListener('click', () => {
@@ -281,212 +257,227 @@
       showScreen('setup');
     });
 
-    // Mic Toggle
     micBtn.addEventListener('click', () => {
       if (localStream) {
         isMuted = !isMuted;
-        localStream.getAudioTracks().forEach(track => {
-          track.enabled = !isMuted;
-        });
-        
-        if (isMuted) {
-          micBtn.classList.add('muted');
-          micBtn.textContent = 'MIC IS OFF';
-        } else {
-          micBtn.classList.remove('muted');
-          micBtn.textContent = 'MIC IS ON';
-        }
+        localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+        micBtn.classList.toggle('muted', isMuted);
+        micBtn.textContent = isMuted ? 'MIC IS OFF' : 'MIC IS ON';
       }
     });
 
-    // Start Call process
+    // START CALL
     talkBtn.addEventListener('click', async () => {
       setStatus("Asking for microphone...");
-      currentHostSuffix = 0; // Reset suffix on every new call
+      
+      // Clean up any old state completely
+      closeSocket();
+      closePeerConnectionOnly();
+      
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        
-        // Reset mic state
         isMuted = false;
         micBtn.classList.remove('muted');
         micBtn.textContent = 'MIC IS ON';
         
         try {
-          if ('wakeLock' in navigator) {
-            wakeLock = await navigator.wakeLock.request('screen');
-          }
-        } catch(e) {
-          console.error("WakeLock failed", e);
-        }
+          if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+        } catch(e) {}
       } catch (err) {
-        setStatus("Microphone permission denied. Please allow it and try again.");
+        setStatus("Microphone permission denied.");
         return;
       }
       
       idleControls.style.display = 'none';
       callControls.style.display = 'flex';
-      setStatus("Connecting to room...");
       
-      connectToRoom();
+      connectSocket();
     });
 
-    function connectToRoom() {
-      if (peer) peer.destroy();
-      
-      const hostId = getHostId();
-      peer = new Peer(hostId, peerConfig);
-      
-      peer.on('open', () => {
-        setStatus("Waiting for someone to join...");
-      });
-      
-      peer.on('call', (incomingCall) => {
-        if (call) {
-           incomingCall.close(); // Only allow one active call
-           return;
-        }
-        call = incomingCall;
-        call.answer(localStream);
-        setupCallEvents();
-      });
-      
-      peer.on('error', (err) => {
-        if (err.type === 'unavailable-id') {
-          // Host already exists! We are the caller.
-          peer.destroy();
-          startAsCaller();
-        } else if (err.type === 'peer-unavailable') {
-          setStatus("Connection dropped. Retrying...");
-          setTimeout(() => { if (callControls.style.display !== 'none') connectToRoom(); }, 2000);
-        } else if (err.type === 'network' || err.type === 'server-error') {
-          setStatus("Network error. Retrying...");
-          setTimeout(() => { if (callControls.style.display !== 'none') connectToRoom(); }, 3000);
-        } else {
-          console.error("PeerJS error:", err);
-          setStatus("Error connecting. Retrying...");
-          setTimeout(() => { if (callControls.style.display !== 'none') connectToRoom(); }, 3000);
-        }
-      });
-      
-      peer.on('disconnected', () => {
-        if (!peer.destroyed && callControls.style.display !== 'none') peer.reconnect();
-      });
-    }
-
-    function startAsCaller() {
-      peer = new Peer(peerConfig);
-      
-      peer.on('open', () => {
-        setStatus("Calling...");
-        const hostId = getHostId();
-        call = peer.call(hostId, localStream);
-        
-        // Timeout if host doesn't answer (e.g. ghost host)
-        const callTimeout = setTimeout(() => {
-          if (call && (!call.peerConnection || (call.peerConnection.iceConnectionState !== 'connected' && call.peerConnection.iceConnectionState !== 'completed'))) {
-             console.log("Call timeout, assuming host is dead. Trying next ID.");
-             if(call) call.close();
-             currentHostSuffix++; // Try the next host suffix
-             connectToRoom(); // Fallback to becoming host on the new ID
-          }
-        }, 12000);
-
-        call.on('stream', (remoteStream) => {
-          clearTimeout(callTimeout);
-          audioEl.srcObject = remoteStream;
-          setStatus("Connected. You can talk now.");
-        });
-        
-        call.on('close', handleCallClose);
-        
-        call.on('error', (err) => {
-          console.error("Caller call error", err);
-          handleCallClose();
-        });
-      });
-      
-      peer.on('error', (err) => {
-         console.error("Caller peer error", err);
-         if (err.type === 'peer-unavailable') {
-            // The host ID is definitely dead or missing, instantly try the next one
-            currentHostSuffix++;
-            if (callControls.style.display !== 'none') connectToRoom();
-         } else {
-            setStatus("Error connecting. Retrying...");
-            setTimeout(() => { if (callControls.style.display !== 'none') connectToRoom(); }, 3000);
-         }
-      });
-      
-      peer.on('disconnected', () => {
-        if (!peer.destroyed && callControls.style.display !== 'none') peer.reconnect();
-      });
-    }
-
-    function setupCallEvents() {
-      call.on('stream', (remoteStream) => {
-        audioEl.srcObject = remoteStream;
-        setStatus("Connected. You can talk now.");
-      });
-      call.on('close', handleCallClose);
-      call.on('error', handleCallClose);
-    }
-
-    function handleCallClose() {
-      if (!call) return;
-      call = null;
-      if (callControls.style.display === 'none') return; // User pressed END
-
-      setStatus("The other person left. Reconnecting...");
-      // Re-enter room as host immediately
-      setTimeout(() => {
-        if (callControls.style.display !== 'none') {
-          connectToRoom();
-        }
-      }, 1000);
-    }
-
-    // Monitor connection health to detect unexpected drops
-    setInterval(() => {
-      if (call && call.peerConnection) {
-        const state = call.peerConnection.iceConnectionState;
-        if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-          console.log("Call state failed:", state);
-          handleCallClose();
-        }
+    // WEBSOCKET LOGIC
+    function connectSocket(retryCount = 0) {
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
       }
-    }, 2000);
+      setStatus(retryCount > 0 ? "Reconnecting..." : "Connecting to server...");
+      
+      ws = new WebSocket(WS_URL);
+      
+      ws.onopen = () => {
+        updateDebugInfo('WS Connected');
+        ws.send(JSON.stringify({ type: 'join', room: roomCode }));
+        setStatus("Waiting for someone to join...");
+        
+        // Timeout if not connected within 20s
+        clearTimeout(connectionTimeoutId);
+        connectionTimeoutId = setTimeout(() => {
+          if (pc && pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
+            setStatus("Could not connect. Press END and try again.");
+            endCall();
+          }
+        }, 20000);
+      };
+      
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        
+        if (msg.type === 'full') {
+          setStatus("Room is full. Try another room.");
+          endCall();
+        }
+        else if (msg.type === 'wait-for-offer') {
+          // Other peer is creating the offer, we just wait.
+          setupPeerConnection();
+        }
+        else if (msg.type === 'peer-joined') {
+          // We are first, so we create the offer.
+          createOffer();
+        }
+        else if (msg.type === 'peer-left') {
+          closePeerConnectionOnly();
+          setStatus("The other person left. Waiting for someone to join...");
+          // Keep socket and mic active, ready for next join.
+        }
+        else if (msg.type === 'signal') {
+          handleSignal(msg.data);
+        }
+      };
+      
+      ws.onclose = () => {
+        updateDebugInfo('WS Dropped');
+        if (callControls.style.display !== 'none') {
+          const delay = Math.min(1000 * Math.pow(2, retryCount), 4000);
+          setTimeout(() => connectSocket(retryCount + 1), delay);
+        }
+      };
+      
+      ws.onerror = (e) => {
+        console.error("WebSocket error");
+      };
+    }
 
-    // End call button
-    endBtn.addEventListener('click', () => {
-      endCall();
-    });
+    function closeSocket() {
+      if (ws) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'leave' }));
+        }
+        ws.onclose = null;
+        ws.close();
+        ws = null;
+      }
+    }
+
+    // WEBRTC LOGIC
+    function setupPeerConnection() {
+      closePeerConnectionOnly();
+      iceCandidateQueue = [];
+      isRemoteDescriptionSet = false;
+      
+      pc = new RTCPeerConnection(iceConfig);
+      
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      
+      pc.onicecandidate = (event) => {
+        if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'signal', data: { candidate: event.candidate } }));
+        }
+      };
+      
+      pc.ontrack = (event) => {
+        audioEl.srcObject = event.streams[0];
+        setStatus("Connected. You can talk now.");
+        clearTimeout(connectionTimeoutId);
+      };
+      
+      pc.oniceconnectionstatechange = () => {
+        updateDebugInfo();
+        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+           setStatus("Call disconnected. Waiting for someone to join...");
+           closePeerConnectionOnly();
+        }
+      };
+    }
+
+    function closePeerConnectionOnly() {
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      updateDebugInfo();
+    }
+
+    async function createOffer() {
+      setupPeerConnection();
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'signal', data: { sdp: pc.localDescription } }));
+        }
+      } catch (e) {
+        console.error("Error creating offer", e);
+      }
+    }
+
+    async function handleSignal(data) {
+      if (!pc) setupPeerConnection();
+      
+      try {
+        if (data.sdp) {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          isRemoteDescriptionSet = true;
+          
+          // Process queued ICE candidates
+          for (const cand of iceCandidateQueue) {
+            await pc.addIceCandidate(cand);
+          }
+          iceCandidateQueue = [];
+          
+          if (data.sdp.type === 'offer') {
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'signal', data: { sdp: pc.localDescription } }));
+            }
+          }
+        } else if (data.candidate) {
+          const candidate = new RTCIceCandidate(data.candidate);
+          if (isRemoteDescriptionSet) {
+            await pc.addIceCandidate(candidate);
+          } else {
+            iceCandidateQueue.push(candidate);
+          }
+        }
+      } catch(e) {
+        console.error("Signal error", e);
+      }
+    }
+
+    // END CALL
+    endBtn.addEventListener('click', endCall);
 
     function endCall() {
-      if (call) {
-        call.close();
-        call = null;
-      }
-      if (peer) {
-        peer.destroy();
-        peer = null;
-      }
+      closeSocket();
+      closePeerConnectionOnly();
+      
       if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+        localStream.getTracks().forEach(t => t.stop());
         localStream = null;
       }
+      clearTimeout(connectionTimeoutId);
       if (wakeLock) {
         wakeLock.release().catch(()=>{});
         wakeLock = null;
       }
       
-      resetUI();
-    }
-
-    function resetUI() {
       idleControls.style.display = 'flex';
       callControls.style.display = 'none';
-      setStatus("Press TALK when you are ready.");
+      setStatus(isServerReady ? "Press TALK when you are ready." : "Getting ready...");
+      updateDebugInfo('Idle');
     }
+
+    init();
   </script>
 </body>
 </html>
