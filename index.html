@@ -193,6 +193,7 @@
   <script>
     // State
     let roomCode = localStorage.getItem('bigtalk_room') || '';
+    let currentHostSuffix = 0;
     let localStream = null;
     let peer = null;
     let call = null;
@@ -248,7 +249,7 @@
     }
 
     function getHostId() {
-      return `bigtalk-${sanitizeRoom(roomCode)}-host`;
+      return `bigtalk-${sanitizeRoom(roomCode)}-host-${currentHostSuffix}`;
     }
 
     function setStatus(text) {
@@ -271,6 +272,7 @@
       }
       roomCode = val;
       localStorage.setItem('bigtalk_room', roomCode);
+      currentHostSuffix = 0;
       showScreen('main');
     });
 
@@ -380,12 +382,13 @@
         
         // Timeout if host doesn't answer (e.g. ghost host)
         const callTimeout = setTimeout(() => {
-          if (call && (!call.peerConnection || call.peerConnection.iceConnectionState !== 'connected')) {
-             console.log("Call timeout, becoming host instead");
+          if (call && (!call.peerConnection || (call.peerConnection.iceConnectionState !== 'connected' && call.peerConnection.iceConnectionState !== 'completed'))) {
+             console.log("Call timeout, assuming host is dead. Trying next ID.");
              if(call) call.close();
-             connectToRoom(); // Fallback to becoming host
+             currentHostSuffix++; // Try the next host suffix
+             connectToRoom(); // Fallback to becoming host on the new ID
           }
-        }, 8000);
+        }, 5000);
 
         call.on('stream', (remoteStream) => {
           clearTimeout(callTimeout);
@@ -403,8 +406,14 @@
       
       peer.on('error', (err) => {
          console.error("Caller peer error", err);
-         setStatus("Error connecting. Retrying...");
-         setTimeout(() => { if (callControls.style.display !== 'none') connectToRoom(); }, 3000);
+         if (err.type === 'peer-unavailable') {
+            // The host ID is definitely dead or missing, instantly try the next one
+            currentHostSuffix++;
+            if (callControls.style.display !== 'none') connectToRoom();
+         } else {
+            setStatus("Error connecting. Retrying...");
+            setTimeout(() => { if (callControls.style.display !== 'none') connectToRoom(); }, 3000);
+         }
       });
       
       peer.on('disconnected', () => {
