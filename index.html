@@ -302,6 +302,7 @@
     // Start Call process
     talkBtn.addEventListener('click', async () => {
       setStatus("Asking for microphone...");
+      currentHostSuffix = 0; // Reset suffix on every new call
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         
@@ -388,7 +389,7 @@
              currentHostSuffix++; // Try the next host suffix
              connectToRoom(); // Fallback to becoming host on the new ID
           }
-        }, 5000);
+        }, 12000);
 
         call.on('stream', (remoteStream) => {
           clearTimeout(callTimeout);
