@@ -67,8 +67,9 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'join') {
       let roomCode = msg.room;
+      // Empty room -> Default to 'main' so devices without a code find each other
       if (!roomCode || roomCode.trim() === '') {
-        roomCode = 'rand-' + crypto.randomBytes(4).toString('hex');
+        roomCode = 'main';
       }
 
       if (!rooms.has(roomCode)) {
